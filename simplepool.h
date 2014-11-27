@@ -10,13 +10,12 @@
 #include <string>
 #include <mutex>
 #include <condition_variable>
+#include <functional>
 
 template <typename T>
 class SimplePool
 {
  public:
-
-
   template <typename TT>
   struct SimplePoolObject
   {
@@ -53,14 +52,22 @@ class SimplePool
     }
   };
 
- SimplePool(unsigned _maxObjects): _maxObjects(_maxObjects),_usedObjects(0)
+ SimplePool(unsigned _maxObjects, bool initialize=true): _maxObjects(_maxObjects),_usedObjects(0)
     {
-      createObjects();
+      if (initialize)
+	createObjects();
 
       _objDataMutex.lock();
       _maxObjLock=false;
       /* _fullMutex.lock(); */
+      if (initialize)
+	initialized = true;
       _objDataMutex.unlock();
+    }
+
+  SimplePool(void): _maxObjects(0),_usedObjects(0)
+    {
+      initialized = false;
     }
 
   virtual ~SimplePool()
@@ -74,7 +81,6 @@ class SimplePool
 	bool cond2 = _maxObjLock;
 	if (_usedObjects<_maxObjects-1)
 	  _fullMutex.unlock();
-
     /* std::cout << "PASO EL MUTEX: "<<std::to_string(_usedObjects)<<"<"<<_maxObjects<<std::endl; */
     for (auto &o : _objects)
       {
@@ -96,6 +102,18 @@ class SimplePool
     return NULL;
   }
 
+  void initialize()
+  {
+    if (!initialized)
+      {
+	createObjects();
+
+	_objDataMutex.lock();
+	initialized = true;
+	_objDataMutex.unlock();
+      }
+  }
+
   void unUseObject()
   {
     std::lock_guard<std::mutex> lock(_objDataMutex);
@@ -108,6 +126,24 @@ class SimplePool
       }
 
     this->_usedObjects--;
+  }
+
+  void setSize(unsigned newSize)
+  {
+    /* We can't change pool size on the fly. And initialization is the one-threaded only  */
+    if (!initialized)
+      _maxObjects = newSize;
+  }
+
+  unsigned getSize()
+  {
+    return _maxObjects;
+  }
+
+  void setInitializer(std::function<void(T&)> newInitializer)
+  {
+    if (!initialized)
+      initializer = newInitializer;
   }
 
   void listResources()
@@ -128,6 +164,7 @@ class SimplePool
     return _usedObjects;
   }
 
+
  protected:
   void createObjects()
   {
@@ -135,14 +172,19 @@ class SimplePool
 
     for (unsigned i=0; i< _maxObjects; ++i)
       {
-	_objects.push_back(SimplePoolObject<T>(i, this, new T()));
+	T* newobj = new T();
+	if (initializer != nullptr)
+	  initializer(*newobj);
+	_objects.push_back(SimplePoolObject<T>(i, this, newobj));
       }
 
     _objDataMutex.unlock();
   }
 
+  bool initialized;
   unsigned _maxObjects;
   std::vector<SimplePoolObject<T> > _objects;
+  std::function<void(T&)> initializer;
   unsigned _usedObjects;
   bool _maxObjLock;
   std::mutex _objDataMutex;

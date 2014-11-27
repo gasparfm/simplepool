@@ -35,7 +35,8 @@ private:
 
 int main ()
 {
-  SimplePool<Test> p(200);
+  SimplePool<Test> p(200, false);
+
   int nth = 0;
       //      std::terminate();
 
